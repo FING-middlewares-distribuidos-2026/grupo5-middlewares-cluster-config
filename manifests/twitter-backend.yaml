@@ -63,7 +63,7 @@ spec:
           emptyDir: {}
       containers:
         - name: backend
-          image: joacor7/twitter-api:sha-7a01410fab2692a52befb38f9d4bd2405ac24635 
+          image: ghcr.io/fing-middlewares-distribuidos-2026/grupo5-backend:v1.0.1 
           ports:
             - name: http
               containerPort: 8080
