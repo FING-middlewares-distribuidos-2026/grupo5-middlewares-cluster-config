@@ -15,7 +15,7 @@ GitOps configuration for the Kubernetes cluster that runs the "Twitter" project 
 
 ## Cluster layout
 
-- **`twitter` namespace** — `twitter-backend.yaml` (Spring Boot on Cassandra + S3, HPA 1–3 replicas, so the Deployment intentionally omits `replicas`) and `twitter-frontend.yaml`. Both are `LoadBalancer` Services with fixed MetalLB IPs from `twitter-pool` (`10.66.51.51` backend, `10.66.51.52` frontend; pool only serves the `twitter` namespace, `autoAssign: false`). Changing the frontend IP also requires updating `CORS_ALLOWED_ORIGINS` (ConfigMap and the matching pod annotation) in the backend.
+- **`twitter` namespace** — `twitter-backend.yaml` (Spring Boot on Cassandra + S3, HPA 1–5 replicas, so the Deployment intentionally omits `replicas`) and `twitter-frontend.yaml`. Both are `LoadBalancer` Services with fixed MetalLB IPs from `twitter-pool` (`10.66.51.51` backend, `10.66.51.52` frontend; pool only serves the `twitter` namespace, `autoAssign: false`). Changing the frontend IP also requires updating `CORS_ALLOWED_ORIGINS` (ConfigMap and the matching pod annotation) in the backend.
 - Image updates are done by editing the image tag directly (commits like "Update front image").
 - Backend metrics come from an OpenTelemetry Java agent injected via an initContainer (port 9464, no app code changes); `monitoring-targets.yaml` scrapes it.
 - **Data stores** — Cassandra via `cass-operator.yaml` + `cassandra-cluster.yaml` (`CassandraDatacenter dc1`, service `clustercassandra-dc1-service.cassandra`); SeaweedFS (`seaweedfs.yaml`) provides the S3 endpoint `seaweedfs-s3.seaweedfs:8333`.

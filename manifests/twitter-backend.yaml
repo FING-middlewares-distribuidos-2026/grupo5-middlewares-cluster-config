@@ -99,7 +99,8 @@ spec:
               mountPath: /otel
           resources:
             requests:
-              cpu: 150m
+              # El HPA mide el % sobre este valor: con 150m escalaba con muy poco consumo real (pico ~317m por pod)
+              cpu: 300m
               memory: 512Mi
             limits:
               cpu: "1"
@@ -150,7 +151,8 @@ spec:
     kind: Deployment
     name: twitter-backend
   minReplicas: 1
-  maxReplicas: 3
+  # Con 300m el pico medido entra en 3 pods; 5 deja margen sin amontonar réplicas en grupo5-6
+  maxReplicas: 5
   metrics:
     - type: Resource
       resource:
