@@ -40,6 +40,10 @@ spec:
       labels:
         app: twitter-backend
     spec:
+      # La imagen está en GHCR de la org, que no permite packages públicos.
+      # Secret creado a mano (PAT classic con read:packages), nunca en Git.
+      imagePullSecrets:
+        - name: ghcr-pull
       # Agente de OpenTelemetry: métricas HTTP, JVM y Cassandra en :9464, sin cambiar el código de la app
       initContainers:
         - name: otel-agent
