@@ -1,20 +1,23 @@
 # Runners de GitHub Actions en el cluster (ARC)
 
-El job `checks` de `grupo5-mobile` (tests, typecheck, lint y formato) corre en el cluster con [Actions Runner Controller](https://github.com/actions/actions-runner-controller) (ARC), en lugar de usar los runners de GitHub. Flux lo despliega desde `manifests/arc-runners.yaml`.
+El job `checks` de `grupo5-mobile` (tests, typecheck, lint y formato) y los jobs `test` y `build` de `grupo5-webapp` (tests y `vite build`) corren en el cluster con [Actions Runner Controller](https://github.com/actions/actions-runner-controller) (ARC), en lugar de usar los runners de GitHub. Flux lo despliega desde `manifests/arc-runners.yaml`.
 
 ## Cómo funciona
 
 - **Controller** (namespace `arc-systems`): gestiona los scale sets.
 - **Listener** (`arc-systems`): mantiene una conexión saliente con GitHub y espera jobs. No hace falta exponer nada del cluster.
-- **Runners** (`arc-runners`): por cada job con `runs-on: grupo5-mobile`, ARC crea un pod efímero que ejecuta el job y se borra al terminar. Pueden correr hasta `maxRunners` jobs a la vez.
+- **Runners** (`arc-runners`): por cada job con `runs-on: grupo5-mobile` o `runs-on: grupo5-webapp`, ARC crea un pod efímero que ejecuta el job y se borra al terminar. Cada scale set corre hasta `maxRunners` jobs a la vez.
 
 | Componente | Valor |
 |---|---|
 | Charts | `gha-runner-scale-set-controller` y `gha-runner-scale-set` 0.15.0 |
 | Imagen del runner | `ghcr.io/actions/actions-runner:2.338.2` |
-| Scale set (`runs-on`) | `grupo5-mobile` |
-| Runners | `minRunners: 0`, `maxRunners: 2` |
-| Recursos por runner | requests 250m / 1Gi / 4Gi de disco; limits 2 CPU / 3Gi |
+| Scale sets (`runs-on`) | `grupo5-mobile` y `grupo5-webapp` |
+| Runners | `minRunners: 0`, `maxRunners: 2` en cada scale set |
+| Recursos por runner (mobile) | requests 250m / 1536Mi / 4Gi de disco; limits 2 CPU / 3Gi |
+| Recursos por runner (webapp) | requests 250m / 1Gi / 2Gi de disco; limits 2 CPU / 2Gi |
+
+Los dos scale sets usan el mismo Secret y el mismo nodo. Con 4 jobs a la vez, las requests suman ~5 GiB de los 7.6 GiB asignables de `grupo5-7`. El job `publish` de la webapp (imagen Docker) sigue en `ubuntu-latest`: el runner de ARC no tiene Docker.
 
 ### Nodo dedicado
 
@@ -40,14 +43,14 @@ El taint no desaloja a los DaemonSets que ya están corriendo.
 Se usa un PAT *fine-grained*: GitHub → Settings → Developer settings → Fine-grained tokens.
 
 - **Resource owner:** `FING-middlewares-distribuidos-2026`.
-- **Repository access:** *Only select repositories* → `grupo5-mobile`.
+- **Repository access:** *Only select repositories* → `grupo5-mobile` y `grupo5-webapp`.
 - **Repository permissions:** *Administration: Read and write*. *Metadata: Read-only* se agrega sola.
 
-Quien crea el token tiene que ser admin del repo. Si lo es, en Settings → Actions → Runners aparece el botón "New self-hosted runner". No se usan los comandos `config.sh` de esa página: ARC registra los runners por su cuenta.
+Quien crea el token tiene que ser admin de los repos. Si la org exige aprobación de tokens, un owner tiene que aprobarlo (también al editarlo para sumar repos). Si lo es, en Settings → Actions → Runners aparece el botón "New self-hosted runner". No se usan los comandos `config.sh` de esa página: ARC registra los runners por su cuenta.
 
 ### 3. Desplegar
 
-Mergear `manifests/arc-runners.yaml` a `main`. Flux crea los namespaces, el controller y el scale set.
+Mergear `manifests/arc-runners.yaml` a `main`. Flux crea los namespaces, el controller y los scale sets.
 
 ### 4. Cargar el token en el cluster
 
@@ -62,24 +65,24 @@ El listener arranca cuando existe el Secret. El token nunca se versiona.
 ```yaml
 jobs:
   checks:
-    runs-on: grupo5-mobile
+    runs-on: grupo5-mobile   # o grupo5-webapp
 ```
 
 ## Verificación
 
 ```sh
-kubectl -n flux-system get helmreleases arc-controller grupo5-mobile-runners   # Ready
-kubectl -n arc-systems get pods                                                # controller y listener Running
+kubectl -n flux-system get helmreleases arc-controller grupo5-mobile-runners grupo5-webapp-runners   # Ready
+kubectl -n arc-systems get pods                                                # controller y un listener por scale set Running
 kubectl -n arc-runners get pods -o wide -w                                     # durante un job: pod en grupo5-7
 ```
 
-En GitHub → `grupo5-mobile` → Settings → Actions → Runners tiene que aparecer el scale set `grupo5-mobile`.
+En GitHub → Settings → Actions → Runners de cada repo tiene que aparecer su scale set (`grupo5-mobile` o `grupo5-webapp`).
 
 ## Mantenimiento
 
 - **Rotar el PAT:** al vencer el token, los jobs quedan en cola. Generar un PAT nuevo y recrear el Secret con `kubectl -n arc-runners delete secret arc-github-token` y el comando del paso 4.
 - **Ajustar recursos:** mirar `kubectl top node grupo5-7` durante los jobs y ajustar `resources` o `maxRunners` en el HelmRelease.
-- **Sumar otro repo** (por ejemplo, `grupo5-webapp`): agregar otro `HelmRelease` igual a `grupo5-mobile-runners`, cambiando `githubConfigUrl` y `runnerScaleSetName`. Puede reusar el mismo Secret si el PAT incluye ese repo. Corre en el mismo nodo, así que hay que revisar que la suma de `maxRunners` entre en 8 GiB.
+- **Sumar otro repo:** agregar otro `HelmRelease` igual a `grupo5-webapp-runners`, cambiando `githubConfigUrl` y `runnerScaleSetName`, y sumar el repo al PAT. Corre en el mismo nodo, así que hay que revisar que las requests de todos los `maxRunners` entren en 8 GiB.
 
 ## Desinstalar
 

@@ -20,7 +20,7 @@ GitOps configuration for the Kubernetes cluster that runs the "Twitter" project 
 - Backend metrics come from an OpenTelemetry Java agent injected via an initContainer (port 9464, no app code changes); `monitoring-targets.yaml` scrapes it.
 - **Data stores** — Cassandra via `cass-operator.yaml` + `cassandra-cluster.yaml` (`CassandraDatacenter dc1`, service `clustercassandra-dc1-service.cassandra`); SeaweedFS (`seaweedfs.yaml`) provides the S3 endpoint `seaweedfs-s3.seaweedfs:8333`.
 - **Nodes** — `grupo5-1` is the control plane; `grupo5-2..5` are `nodegroup=weak` (2 vCPU / 4 GiB, run Cassandra); `grupo5-6` and `grupo5-7` are `nodegroup=strong` (4 vCPU / 8 GiB). `grupo5-6` is general purpose (no taint). `grupo5-7` is reserved for CI: label `ci=true` + taint `ci=true:NoSchedule`, both set by hand, so only DaemonSets and ARC runners land there.
-- **CI runners** — `arc-runners.yaml`: Actions Runner Controller (controller in `arc-systems`, scale set `grupo5-mobile` in `arc-runners`) runs the `checks` job of grupo5-mobile (`runs-on: grupo5-mobile`). Runner pods are ephemeral, pinned to `grupo5-7` via `nodeSelector`/toleration, and the `solo-internet` NetworkPolicy blocks them from reaching cluster services. See `docs/runner-ci.md`.
+- **CI runners** — `arc-runners.yaml`: Actions Runner Controller (controller in `arc-systems`, scale sets `grupo5-mobile` and `grupo5-webapp` in `arc-runners`) runs the `checks` job of grupo5-mobile (`runs-on: grupo5-mobile`) and the `test`/`build` jobs of grupo5-webapp (`runs-on: grupo5-webapp`). Runner pods are ephemeral, pinned to `grupo5-7` via `nodeSelector`/toleration, and the `solo-internet` NetworkPolicy blocks them from reaching cluster services. See `docs/runner-ci.md`.
 - Storage uses OpenStack Cinder CSI `StorageClass`es with `reclaimPolicy: Retain`, one per component, defined in that component's file.
 
 ## Monitoring stack (`monitoring` namespace)
@@ -39,7 +39,7 @@ Nodes are tight on memory (nodes running Cassandra have ~1 GiB free). Requests a
 ## Secrets (created by hand, never in Git)
 
 - `twitter-backend-secrets` in `twitter` (consumed via `envFrom` by the backend).
-- `arc-github-token` in `arc-runners` (key `github_token`): fine-grained PAT with Administration read/write on grupo5-mobile; recreate it when the PAT is rotated.
+- `arc-github-token` in `arc-runners` (key `github_token`): fine-grained PAT with Administration read/write on grupo5-mobile and grupo5-webapp, shared by both scale sets; recreate it when the PAT is rotated.
 - `alertmanager-telegram` in `monitoring` (keys `bot-token`, `chat-id`), used by both Alertmanager and the bot; must exist before deploying.
 
 ## Validating changes
