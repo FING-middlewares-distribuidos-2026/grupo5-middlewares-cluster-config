@@ -39,6 +39,7 @@ Nodes are tight on memory (nodes running Cassandra have ~1 GiB free). Requests a
 ## Secrets (created by hand, never in Git)
 
 - `twitter-backend-secrets` in `twitter` (consumed via `envFrom` by the backend).
+- `ghcr-pull` in `twitter` (type `kubernetes.io/dockerconfigjson`): `imagePullSecrets` of the frontend, whose image lives in the org's GHCR and cannot be public. Classic PAT with `read:packages`; recreate it when the PAT is rotated.
 - `arc-github-token` in `arc-runners` (key `github_token`): fine-grained PAT with Administration read/write on grupo5-mobile and grupo5-webapp, shared by both scale sets; recreate it when the PAT is rotated.
 - `alertmanager-telegram` in `monitoring` (keys `bot-token`, `chat-id`), used by both Alertmanager and the bot; must exist before deploying.
 
