@@ -1,0 +1,218 @@
+# Runners propios de GitHub Actions (Actions Runner Controller) para los checks de grupo5-mobile y grupo5-webapp.
+# Los runners se conectan solos a GitHub: no hace falta exponer nada del cluster.
+# El Secret arc-github-token (clave github_token, un PAT fine-grained con acceso a los dos repos) se crea a mano
+# en arc-runners, fuera de Git. Lo usan los dos scale sets.
+# Los runners corren solo en grupo5-7, nodo exclusivo para CI (label y taint ci=true, puestos a mano).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arc-systems
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: arc-runners
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: actions-runner-controller
+  namespace: flux-system
+spec:
+  type: oci
+  interval: 1h
+  url: oci://ghcr.io/actions/actions-runner-controller-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: arc-controller
+  namespace: flux-system
+spec:
+  interval: 10m
+  releaseName: arc
+  targetNamespace: arc-systems
+  chart:
+    spec:
+      chart: gha-runner-scale-set-controller
+      version: "0.15.0"
+      sourceRef:
+        kind: HelmRepository
+        name: actions-runner-controller
+  values:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+    # El default es debug y llenaría Loki
+    flags:
+      logLevel: info
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: grupo5-mobile-runners
+  namespace: flux-system
+spec:
+  # Primero los CRDs y el controller
+  dependsOn:
+    - name: arc-controller
+  interval: 10m
+  releaseName: grupo5-mobile
+  targetNamespace: arc-runners
+  chart:
+    spec:
+      chart: gha-runner-scale-set
+      version: "0.15.0"
+      sourceRef:
+        kind: HelmRepository
+        name: actions-runner-controller
+  values:
+    githubConfigUrl: https://github.com/FING-middlewares-distribuidos-2026/grupo5-mobile
+    githubConfigSecret: arc-github-token
+    # Es el valor de runs-on en el workflow
+    runnerScaleSetName: grupo5-mobile
+    # El pod existe solo mientras corre un job: sin jobs no ocupa memoria
+    minRunners: 0
+    # grupo5-7 (4 vCPU / 8 GiB) admite dos jobs a la vez sin quedarse sin memoria
+    maxRunners: 2
+    # Explícito para no depender de la búsqueda del chart (release "arc" en arc-systems)
+    controllerServiceAccount:
+      namespace: arc-systems
+      name: arc-gha-rs-controller
+    listenerTemplate:
+      spec:
+        containers:
+          - name: listener
+            resources:
+              requests:
+                cpu: 5m
+                memory: 32Mi
+              limits:
+                memory: 64Mi
+    template:
+      spec:
+        containers:
+          - name: runner
+            image: ghcr.io/actions/actions-runner:2.338.2
+            command: ["/home/runner/run.sh"]
+            # Medido en el primer job real (2026-11-10): pico de ~1080Mi de memoria (pod completo)
+            # y ~0.5 cores de promedio por minuto, con ráfagas más altas en npm ci y jest.
+            # Los limits son más altos que lo medido porque el nodo es exclusivo: jest y tsc aprovechan los cores.
+            # El disco del nodo es de 20 GiB: la request evita meter dos jobs si no entran node_modules y caché.
+            resources:
+              requests:
+                cpu: 250m
+                memory: 1536Mi
+                ephemeral-storage: 4Gi
+              limits:
+                cpu: "2"
+                memory: 3Gi
+        # Solo en el nodo CI: el nodeSelector lo ata a grupo5-7 y la toleration le permite pasar el taint
+        # que deja afuera al resto de los pods. grupo5-6 queda libre para el backend y lo demás.
+        nodeSelector:
+          ci: "true"
+        tolerations:
+          - key: ci
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: grupo5-webapp-runners
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: arc-controller
+  interval: 10m
+  releaseName: grupo5-webapp
+  targetNamespace: arc-runners
+  chart:
+    spec:
+      chart: gha-runner-scale-set
+      version: "0.15.0"
+      sourceRef:
+        kind: HelmRepository
+        name: actions-runner-controller
+  # Igual que grupo5-mobile-runners salvo repo, nombre y recursos
+  values:
+    githubConfigUrl: https://github.com/FING-middlewares-distribuidos-2026/grupo5-webapp
+    githubConfigSecret: arc-github-token
+    runnerScaleSetName: grupo5-webapp
+    minRunners: 0
+    # Junto con los 2 de mobile, hasta 4 jobs a la vez en grupo5-7: las requests suman ~5 GiB de 7.6 asignables
+    maxRunners: 2
+    controllerServiceAccount:
+      namespace: arc-systems
+      name: arc-gha-rs-controller
+    listenerTemplate:
+      spec:
+        containers:
+          - name: listener
+            resources:
+              requests:
+                cpu: 5m
+                memory: 32Mi
+              limits:
+                memory: 64Mi
+    template:
+      spec:
+        containers:
+          - name: runner
+            image: ghcr.io/actions/actions-runner:2.338.2
+            command: ["/home/runner/run.sh"]
+            # Estimado, sin medir todavía: node --test (jsdom) y vite build son más livianos que jest-expo.
+            # Ajustar con kubectl top después de los primeros jobs.
+            resources:
+              requests:
+                cpu: 250m
+                memory: 1Gi
+                ephemeral-storage: 2Gi
+              limits:
+                cpu: "2"
+                memory: 2Gi
+        nodeSelector:
+          ci: "true"
+        tolerations:
+          - key: ci
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+---
+# El runner ejecuta el código de los PRs: solo puede salir a internet (GitHub, npm) y a DNS,
+# no a los servicios del cluster, a los nodos ni a la metadata de OpenStack.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: solo-internet
+  namespace: arc-runners
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
