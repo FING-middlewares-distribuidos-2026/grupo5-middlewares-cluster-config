@@ -64,6 +64,20 @@ spec:
           annotations:
             summary: "{{ $labels.deployment }} no tiene réplicas disponibles"
             description: "El deployment {{ $labels.namespace }}/{{ $labels.deployment }} lleva 2 minutos sin pods listos."
+        # Como KubeHpaMaxedOut del chart, pero avisa al llegar al máximo (aquel espera 15 min), en español
+        # y sin el pod de kube-state-metrics: el max by deja solo namespace y horizontalpodautoscaler.
+        # El for de 1m evita avisar por un cambio momentáneo de maxReplicas (el 10/11 bajó a 1 durante 30 s).
+        - alert: TwitterReplicasAlMaximo
+          expr: |
+            max by (namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_status_current_replicas{namespace="twitter"})
+            >= max by (namespace, horizontalpodautoscaler) (kube_horizontalpodautoscaler_spec_max_replicas{namespace="twitter"})
+          for: 1m
+          labels:
+            severity: warning
+            notificar: telegram
+          annotations:
+            summary: "{{ $labels.horizontalpodautoscaler }} llegó al máximo de réplicas"
+            description: "El HPA tiene {{ $value }} réplicas, el máximo, y no puede escalar más. Si la carga sigue subiendo, la API va a responder más lento."
 
     - name: servicios
       rules:
